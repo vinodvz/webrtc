@@ -22,6 +22,7 @@ class I420BufferInterface;
 class I420ABufferInterface;
 class I444BufferInterface;
 class I010BufferInterface;
+class H264BufferInterface;
 
 // Base class for frame buffers of different types of pixel format and storage.
 // The tag in type() indicates how the data is represented, and each type is
@@ -49,6 +50,7 @@ class VideoFrameBuffer : public rtc::RefCountInterface {
     kI420A,
     kI444,
     kI010,
+    kH264,
   };
 
   // This function specifies in what pixel format the data is stored in.
@@ -77,7 +79,8 @@ class VideoFrameBuffer : public rtc::RefCountInterface {
   const I444BufferInterface* GetI444() const;
   I010BufferInterface* GetI010();
   const I010BufferInterface* GetI010() const;
-
+  H264BufferInterface* GetH264();
+  const H264BufferInterface* GetH264() const;
  protected:
   ~VideoFrameBuffer() override {}
 };
@@ -170,6 +173,16 @@ class I010BufferInterface : public PlanarYuv16BBuffer {
 
  protected:
   ~I010BufferInterface() override {}
+};
+
+// This interface represents unencode H264 frames: Type::kH264.
+class H264BufferInterface : public VideoFrameBuffer {
+ public:
+  virtual const uint8_t* Data() const = 0;
+  virtual int Data_len() const = 0;
+
+ protected:
+  ~H264BufferInterface() override {}
 };
 
 }  // namespace webrtc

@@ -110,6 +110,10 @@ class VCMGenericDecoder {
   VideoCodecType _codecType;
   const bool _isExternal;
   VideoContentType _last_keyframe_content_type;
+
+  //VIZIO: Only encoded key-frames will have width & height
+  uint32_t _encoded_width = 0;
+  uint32_t _encoded_height = 0;
 };
 
 }  // namespace webrtc

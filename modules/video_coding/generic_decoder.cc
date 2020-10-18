@@ -19,6 +19,7 @@
 #include "rtc_base/timeutils.h"
 #include "rtc_base/trace_event.h"
 #include "system_wrappers/include/clock.h"
+#include "api/video/h264_buffer.h"
 
 namespace webrtc {
 
@@ -228,9 +229,44 @@ int32_t VCMGenericDecoder::Decode(const VCMEncodedFrame& frame, int64_t nowMs) {
   _callback->Map(frame.Timestamp(), &_frameInfos[_nextFrameInfoIdx]);
 
   _nextFrameInfoIdx = (_nextFrameInfoIdx + 1) % kDecoderFrameMemoryLength;
-  int32_t ret = decoder_->Decode(frame.EncodedImage(), frame.MissingFrame(),
+  int32_t ret = WEBRTC_VIDEO_CODEC_OK;
+  if(_codecType != kVideoCodecH264) {
+    ret = decoder_->Decode(frame.EncodedImage(), frame.MissingFrame(),
                                  frame.CodecSpecific(), frame.RenderTimeMs());
+  } else {
+    uint32_t width = (0 != frame.EncodedImage()._encodedWidth)?
+                           frame.EncodedImage()._encodedWidth:_encoded_width;
+    uint32_t height = (0 != frame.EncodedImage()._encodedHeight)?
+                           frame.EncodedImage()._encodedHeight:_encoded_height;
+    _encoded_width = width;
+    _encoded_height = height;
+    rtc::scoped_refptr<VideoFrameBuffer> input_image =
+        H264Buffer::Copy(width,
+                         height,
+                         frame.EncodedImage()._buffer,
+                         frame.EncodedImage()._length);
+FILE *fp=fopen("/tmp/conj_video.raw","ab");
+if(fp) {
+  fwrite(frame.EncodedImage()._buffer, frame.EncodedImage()._length, 1, fp);
+  fflush(fp);
+  fclose(fp);
+}
+    ColorSpace cs = ColorSpace(ColorSpace::PrimaryID::kBT709,
+                    ColorSpace::TransferID::kBT709,
+                    ColorSpace::MatrixID::kBT709,
+                    ColorSpace::RangeID::kLimited);
 
+    VideoFrame h264_frame =
+        VideoFrame::Builder()
+            .set_video_frame_buffer(input_image)
+            .set_timestamp_us(frame.EncodedImage().capture_time_ms_)
+            .set_timestamp_rtp(frame.EncodedImage().Timestamp())
+            .set_rotation(kVideoRotation_0)
+            .set_color_space(cs)
+            .build();
+    absl::optional<uint8_t> qp;
+    _callback->Decoded(h264_frame, absl::nullopt, qp);
+  }
   _callback->OnDecoderImplementationName(decoder_->ImplementationName());
   if (ret < WEBRTC_VIDEO_CODEC_OK) {
     RTC_LOG(LS_WARNING) << "Failed to decode frame with timestamp "

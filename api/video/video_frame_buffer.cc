@@ -55,6 +55,16 @@ const I010BufferInterface* VideoFrameBuffer::GetI010() const {
   return static_cast<const I010BufferInterface*>(this);
 }
 
+H264BufferInterface* VideoFrameBuffer::GetH264() {
+  RTC_CHECK(type() == Type::kH264);
+  return static_cast<H264BufferInterface*>(this);
+}
+
+const H264BufferInterface* VideoFrameBuffer::GetH264() const {
+  RTC_CHECK(type() == Type::kH264);
+  return static_cast<const H264BufferInterface*>(this);
+}
+
 VideoFrameBuffer::Type I420BufferInterface::type() const {
   return Type::kI420;
 }
