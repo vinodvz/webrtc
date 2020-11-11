@@ -67,6 +67,10 @@ class VideoFrameBuffer : public rtc::RefCountInterface {
   // software encoders.
   virtual rtc::scoped_refptr<I420BufferInterface> ToI420() = 0;
 
+  // Returns a memory-backed frame buffer in H264 format. If the pixel data is
+  // in another format, nullptr will be returned.
+  virtual rtc::scoped_refptr<H264BufferInterface> ToH264() {return nullptr;};
+
   // These functions should only be called if type() is of the correct type.
   // Calling with a different type will result in a crash.
   // TODO(magjed): Return raw pointers for GetI420 once deprecated interface is
@@ -180,6 +184,7 @@ class H264BufferInterface : public VideoFrameBuffer {
  public:
   virtual const uint8_t* Data() const = 0;
   virtual int Data_len() const = 0;
+  rtc::scoped_refptr<I420BufferInterface> ToI420() override { return nullptr; }
 
  protected:
   ~H264BufferInterface() override {}

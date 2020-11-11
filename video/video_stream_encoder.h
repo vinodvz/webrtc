@@ -192,6 +192,7 @@ class VideoStreamEncoder : public VideoStreamEncoderInterface,
   vcm::VideoSender video_sender_ RTC_GUARDED_BY(&encoder_queue_);
   const std::unique_ptr<OveruseFrameDetector> overuse_detector_
       RTC_PT_GUARDED_BY(&encoder_queue_);
+  bool overuse_detector_started_ = false;
   std::unique_ptr<QualityScaler> quality_scaler_ RTC_GUARDED_BY(&encoder_queue_)
       RTC_PT_GUARDED_BY(&encoder_queue_);
 

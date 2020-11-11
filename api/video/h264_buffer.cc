@@ -52,10 +52,6 @@ rtc::scoped_refptr<H264Buffer> H264Buffer::Copy(int width,
   return h264buf;
 }
 
-rtc::scoped_refptr<I420BufferInterface> H264Buffer::ToI420() {
-  return nullptr;
-}
-
 int H264Buffer::width() const {
   return width_;
 }

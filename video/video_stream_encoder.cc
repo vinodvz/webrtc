@@ -660,6 +660,122 @@ void VideoStreamEncoder::ConfigureQualityScaler() {
       GetActiveCounts(kCpu), GetActiveCounts(kQuality));
 }
 
+#define TRY_MATCH(p,a) {\
+     if (p[a+1] == 0) {\
+            if (p[a+0] == 0 && p[a+2] == 1)\
+                return a+p;\
+            if (p[a+2] == 0 && p[a+3] == 1)\
+                return a+p+1;\
+        }\
+        if (p[a+3] == 0) {\
+            if (p[a+2] == 0 && p[a+4] == 1)\
+                return a+p+2;\
+            if (p[a+4] == 0 && p[a+5] == 1)\
+                return a+p+3;\
+        }\
+    }
+
+static inline const uint8_t * FindStartCodeAnnexB(
+                                const uint8_t *p, const uint8_t *end ) {
+    const uint8_t *a = p + 4 - ((intptr_t)p & 3);
+
+    for (end -= 3; p < a && p <= end; p++) {
+        if (p[0] == 0 && p[1] == 0 && p[2] == 1)
+            return p;
+    }
+
+    for (end -= 3; p < end; p += 4) {
+        uint32_t x = *(const uint32_t*)p;
+        if ((x - 0x01010101) & (~x) & 0x80808080)
+        {
+            /* matching DW isn't faster */
+            TRY_MATCH(p, 0);
+        }
+    }
+
+    for (end += 3; p <= end; p++) {
+        if (p[0] == 0 && p[1] == 0 && p[2] == 1)
+            return p;
+    }
+
+    return NULL;
+}
+
+/* strips any AnnexB startcode [0] 0 0 1 */
+static inline bool strip_AnnexB_startcode( const uint8_t **pp_data,
+                                        size_t *pi_data )
+{
+    unsigned bitflow = 0;
+    const uint8_t *p_data = *pp_data;
+    size_t i_data = *pi_data;
+
+    while( i_data && p_data[0] <= 1 )
+    {
+        bitflow = (bitflow << 1) | (!p_data[0]);
+        p_data++;
+        i_data--;
+        if( !(bitflow & 0x01) )
+        {
+            if( (bitflow & 0x06) == 0x06 ) /* there was at least 2 leading zeros */
+            {
+                *pi_data = i_data;
+                *pp_data = p_data;
+                return true;
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
+#define H264_NAL_TYPE(v) (v & 0x1F)
+
+//TODO: VINOD It can be optimized a lot. It is just a pattern matching
+static int getH264FragmentationInfo(const uint8_t *data, size_t length,
+                              RTPFragmentationHeader &frag_header, bool &idr) {
+  size_t frag_len = 0;
+  const uint8_t *p1, *p2, *pend;
+
+  idr = false;
+  p1 = data;
+  pend = data + length;
+
+  for(p1 = data;
+      NULL != (p1 = FindStartCodeAnnexB((const uint8_t*)p1, pend)); p1 += 3) {
+    frag_len++;
+  }
+
+  if(frag_len > 0 ) {
+    frag_header.VerifyAndAllocateFragmentationHeader(frag_len);
+
+    frag_len = 0;
+    for(p1 = FindStartCodeAnnexB((const uint8_t*)data, pend);
+        p1 && pend && p1 < pend; p1 = p2) {
+
+      size_t nalu_size;
+      p2 = FindStartCodeAnnexB(p1 + 3, pend);
+      if(!p2)
+        p2 = pend;
+
+      nalu_size = p2 - p1;
+
+      strip_AnnexB_startcode(&p1, &nalu_size);
+
+      // filter suffix '00' bytes
+      if (p2 != pend) --nalu_size;
+      while(0 == p1[nalu_size-1]) --nalu_size;
+
+      if(!idr)
+        idr = (5 == H264_NAL_TYPE(*p1));
+
+      frag_header.fragmentationOffset[frag_len] = p1 - data;
+      frag_header.fragmentationLength[frag_len] = nalu_size;
+      frag_len++;
+    }
+  }
+
+  return frag_len;
+}
 void VideoStreamEncoder::OnFrame(const VideoFrame& video_frame) {
   RTC_DCHECK_RUNS_SERIALIZED(&incoming_frame_race_checker_);
   VideoFrame incoming_frame = video_frame;
@@ -720,7 +836,53 @@ void VideoStreamEncoder::OnFrame(const VideoFrame& video_frame) {
             posted_frames_waiting_for_encode_.fetch_sub(1);
         RTC_DCHECK_GT(posted_frames_waiting_for_encode, 0);
         if (posted_frames_waiting_for_encode == 1) {
-          MaybeEncodeVideoFrame(incoming_frame, post_time_us);
+          if(VideoFrameBuffer::Type::kH264 ==
+                              incoming_frame.video_frame_buffer()->type()) {
+            CodecSpecificInfo codec_specific_info;
+
+            if(!overuse_detector_started_) {
+              const webrtc::VideoEncoderFactory::CodecInfo info =
+                  settings_.encoder_factory->QueryVideoEncoder(
+                      encoder_config_.video_format);
+
+              overuse_detector_->StopCheckForOveruse();
+              overuse_detector_->StartCheckForOveruse(
+                  GetCpuOveruseOptions(settings_, info.is_hardware_accelerated), this);
+              overuse_detector_started_ = true;
+            }
+
+            codec_specific_info.codecType = kVideoCodecH264;
+            codec_specific_info.codec_name = "H264";
+            codec_specific_info.codecSpecific.H264.packetization_mode =
+                                        H264PacketizationMode::NonInterleaved;
+
+            EncodedImage encoded_image;
+            encoded_image._encodedWidth = incoming_frame.width();
+            encoded_image._encodedHeight = incoming_frame.height();
+            encoded_image.SetTimestamp(incoming_frame.timestamp());
+            encoded_image.ntp_time_ms_ = incoming_frame.ntp_time_ms();
+            encoded_image.capture_time_ms_ = incoming_frame.render_time_ms();
+            encoded_image.rotation_ = incoming_frame.rotation();
+            encoded_image.content_type_ = VideoContentType::UNSPECIFIED;
+            encoded_image.timing_.flags = VideoSendTiming::kInvalid;
+            encoded_image._completeFrame = true;
+            encoded_image.SetSpatialIndex(0);
+            encoded_image.SetColorSpace(incoming_frame.color_space());
+            encoded_image._buffer = const_cast<uint8_t*>(incoming_frame.
+                                      video_frame_buffer()->ToH264()->Data());
+            encoded_image._length =
+                    incoming_frame.video_frame_buffer()->ToH264()->Data_len();
+
+            RTPFragmentationHeader fragmentation;
+            bool idr;
+            getH264FragmentationInfo(encoded_image._buffer,
+                                     encoded_image._length, fragmentation, idr );
+            encoded_image._frameType = idr?kVideoFrameKey:kVideoFrameDelta;
+
+            OnEncodedImage(encoded_image, &codec_specific_info, &fragmentation);
+          } else {
+            MaybeEncodeVideoFrame(incoming_frame, post_time_us);
+          }
         } else {
           // There is a newer frame in flight. Do not encode this frame.
           RTC_LOG(LS_VERBOSE)

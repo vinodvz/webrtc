@@ -40,12 +40,6 @@ class RTC_EXPORT H264Buffer : public H264BufferInterface {
   int width() const override;
   int height() const override;
 
-  // Returns a memory-backed frame buffer in I420 format. If the pixel data is
-  // in another format, a conversion will take place. All implementations must
-  // provide a fallback to I420 for compatibility with e.g. the internal WebRTC
-  // software encoders.
-  rtc::scoped_refptr<I420BufferInterface> ToI420() override;
-
   const uint8_t* Data() const override;
   int Data_len() const override;
 
